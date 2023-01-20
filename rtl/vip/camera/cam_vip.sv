@@ -20,6 +20,7 @@
         parameter VRES = 480
 )
 (
+    input logic        en_i,
     output logic       cam_pclk_o,
     output logic       cam_vsync_o,
     output logic       cam_href_o,
@@ -28,9 +29,11 @@
     timeunit      1ns;
     timeprecision 1ps;
 
-    localparam clk_period=150;
+    localparam clk_period=150; // 6MHz
     localparam TP = 2;
     localparam TLINE = (HRES+144)*TP;
+
+    logic cam_clk_o;
 
     logic [23:0] pixel_array0 [(HRES*VRES)-1:0];
     logic [23:0] pixel_array1 [(HRES*VRES)-1:0];
@@ -64,30 +67,102 @@
 
     assign s_currentpixel = r_framesel ? pixel_array1[(r_lineptr*HRES)+r_colptr] : pixel_array0[(r_lineptr*HRES)+r_colptr];
     assign cam_data_o     = r_bytesel ? {s_currentpixel[12:10],s_currentpixel[7:3]} : {s_currentpixel[23:19],s_currentpixel[15:13]}; //coded with RGB565
-
+    assign cam_pclk_o =  cam_clk_o ;
+    
     initial
     begin
-        cam_pclk_o  = 1'b1;
-
+        cam_clk_o  = 1'b0;
+        
+        @(posedge en_i);
         // wait one cycle first
         #(clk_period);
 
-        forever cam_pclk_o = #(clk_period/2) ~cam_pclk_o;
+        forever cam_clk_o = #(clk_period/2) ~cam_clk_o;
     end
+
+    initial begin
+        int f0, f1, stop0, stop1, flag, p0, p1;
+        stop0=0;
+        stop1=-1;
+        flag=-5;
+        p0=0;
+        p1=0;
+
+        `ifdef GENERATE_H
+        f0 = $fopen("./rgb565_f0.h","w");
+        f1 = $fopen("./rgb565_f1.h","w");
+        $fwrite(f0,"\n\n\nint volatile frame_0[N_PIXEL] = {\n");
+        $fwrite(f1,"\n\n\nint volatile frame_1[N_PIXEL] = {\n");
+        `endif
+
+        @(negedge s_rstn);
+        @(posedge en_i);
+        @(posedge cam_clk_o);
+        for(int i=0; i<=2;i++) begin
+            @(posedge cam_href_o) 
+            while(cam_href_o==1'b1) begin
+               @(posedge cam_clk_o);
+                if (r_framesel==1'b1) begin  
+                    if (stop0==0) begin
+                        stop0=1;
+                        `ifdef GENERATE_H
+                        $fwrite(f0,"};\n");
+                        $fwrite(f0,"#define N_PIXEL %d\n",p0);
+                        $fclose(f0);
+                        `endif
+                    end
+                    if(stop1>-1) begin
+                        if(p1<HRES*VRES*2) begin
+                            `ifdef GENERATE_H
+                            $fwrite(f1,"    0x%h,\n",cam_data_o);
+                            `endif
+                            p1++;
+                            flag=1;
+                        end
+                    end 
+                end else begin
+                    if (stop0==0) begin
+                        if(p0<HRES*VRES*2) begin
+                           `ifdef GENERATE_H
+                            $fwrite(f0,"    0x%h,\n",cam_data_o);
+                            `endif
+                            p0++;
+                            stop1++;
+                        end
+                    end else begin
+                        if(flag>0) begin
+                            `ifdef GENERATE_H
+                            $fwrite(f1,"};\n");
+                            $fwrite(f1,"#define N_PIXEL %d\n",p1);
+                            $fclose(f1);
+                            `endif
+                            flag=-5;
+                            stop1=-1;
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    
+
 
     initial 
     begin
+        
+
 
         s_rstn = 1'b0;
         if ($test$plusargs("VSIM_PATH")) 
             if (!$value$plusargs("VSIM_PATH=%s", vsim_path)) 
                 vsim_path = "../";
 
-        frame0_path = {vsim_path, "/../rtl/vip/camera/img/frame0.img"};
-        frame1_path = {vsim_path, "/../rtl/vip/camera/img/frame1.img"};
+        frame0_path = {vsim_path, "./../../../../rtl/vip/camera/img/frame0.img"};
+        frame1_path = {vsim_path, "./../../../../rtl/vip/camera/img/frame1.img"};
         $readmemh(frame0_path, pixel_array0);
         $readmemh(frame1_path, pixel_array1);
-        #30ms s_rstn = 1'b1;
+        #1ms s_rstn = 1'b1;
     end
 
     always_comb begin : proc_sm
@@ -173,8 +248,8 @@
         endcase // state
     end
 
-    always_ff @(posedge cam_pclk_o or negedge s_rstn) begin : proc_r_bytesel
-        if(~s_rstn) begin
+    always_ff @(posedge cam_clk_o or negedge s_rstn or negedge en_i) begin : proc_r_bytesel
+        if(~s_rstn | ~en_i) begin
             r_bytesel  <= 'h0;
             r_colptr   <= 'h0;
             r_lineptr  <= 'h0;
@@ -187,8 +262,8 @@
         end
     end
 
-    always_ff @(posedge cam_pclk_o or negedge s_rstn) begin : proc_r_counter
-        if(~s_rstn) begin
+    always_ff @(posedge cam_clk_o or negedge s_rstn or negedge en_i) begin : proc_r_counter
+        if(~s_rstn | ~en_i) begin
             r_counter <= 0;
             r_target  <= 0;
             r_active  <= 0;
@@ -220,8 +295,8 @@
         end
     end
 
-    always_ff @(posedge cam_pclk_o or negedge s_rstn) begin : proc_state
-        if(~s_rstn) begin
+    always_ff @(posedge cam_clk_o or negedge s_rstn or negedge en_i) begin : proc_state
+        if(~s_rstn | ~en_i) begin
             state <= RST;
         end else begin
             state <= state_next;

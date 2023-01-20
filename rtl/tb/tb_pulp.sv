@@ -44,7 +44,7 @@ module tb_pulp;
   parameter USE_FLL = 1;
 
   // use camera verification IP
-  parameter USE_SDVT_CPI = 0;
+  parameter USE_SDVT_CPI = 1;
 
   // files to be used to load the I2S verification IP, if instantiated
   localparam I2S_FILENAME_0 = "i2s_buffer_0.hex";
@@ -114,6 +114,7 @@ module tb_pulp;
 
   tri w_uart_rx;
   tri w_uart_tx;
+
 
   wire w_cam_pclk;
   wire [7:0] w_cam_data;
@@ -359,11 +360,12 @@ module tb_pulp;
 `endif
 
   // CPI verification IP
-  if (!USE_SDVT_CPI) begin
+  if (USE_SDVT_CPI) begin
     cam_vip #(
       .HRES(320),
       .VRES(240)
     ) i_cam_vip (
+      .en_i       (w_spi_master_sdio0), //from gpio0
       .cam_pclk_o (w_cam_pclk),
       .cam_vsync_o(w_cam_vsync),
       .cam_href_o (w_cam_hsync),
@@ -471,7 +473,7 @@ module tb_pulp;
 
     .pad_uart_rx(w_uart_tx),
     .pad_uart_tx(w_uart_rx),
-
+     
     .pad_cam_pclk (w_cam_pclk),
     .pad_cam_hsync(w_cam_hsync),
     .pad_cam_data0(w_cam_data[0]),
